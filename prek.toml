@@ -1,0 +1,47 @@
+[[repos]]
+repo = "builtin"
+
+[[repos.hooks]]
+id = "trailing-whitespace"
+
+[[repos.hooks]]
+id = "end-of-file-fixer"
+
+[[repos.hooks]]
+id = "check-toml"
+
+[[repos.hooks]]
+id = "check-merge-conflict"
+
+[[repos.hooks]]
+id = "deny-pattern"
+name = "no emdash or unicode arrows"
+args = ["—", "→", "←", "↔", "⟶", "⟵", "⇒", "⇐"]
+types = ["text"]
+exclude = "prek\\.toml"
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "prettier"
+name = "prettier (markdown)"
+language = "system"
+entry = "npx prettier --write"
+types = ["markdown"]
+
+[[repos.hooks]]
+id = "rustfmt"
+name = "rustfmt"
+language = "system"
+entry = "cargo fmt -- --check"
+types = ["rust"]
+pass_filenames = false
+
+[[repos.hooks]]
+id = "cargo-test"
+name = "cargo test"
+language = "system"
+entry = "cargo test"
+stages = ["pre-commit"]
+pass_filenames = false
