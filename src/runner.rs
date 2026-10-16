@@ -10,6 +10,7 @@ use regex::Regex;
 use crate::item::{SuggestionOpts, VariableMap};
 use crate::matcher::Scheme;
 use crate::picker::{self, Height, ItemSource, PickResult, PickerConfig};
+use crate::theme::Theme;
 
 /// Regex to find `<variable_name>` placeholders in snippets.
 static VAR_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<(\w[\w\d\-_]*)>").unwrap());
@@ -20,6 +21,7 @@ pub fn interpolate(
     tags: &str,
     variables: &VariableMap,
     shell: &str,
+    theme: &Theme,
 ) -> Result<Option<String>> {
     let mut result = snippet.to_string();
 
@@ -42,7 +44,7 @@ pub fn interpolate(
         let value = if let Some(suggestion) = variables.get_suggestion(tags, var_name) {
             // Run suggestion command, let user pick
             let (cmd, opts) = suggestion;
-            prompt_variable(var_name, cmd, opts.as_ref(), shell)?
+            prompt_variable(var_name, cmd, opts.as_ref(), shell, theme)?
         } else {
             // No suggestion -- free-form input from user
             prompt_freeform(var_name)?
@@ -66,6 +68,7 @@ fn prompt_variable(
     command: &str,
     opts: Option<&SuggestionOpts>,
     shell: &str,
+    theme: &Theme,
 ) -> Result<Option<String>> {
     let cmd = command.trim();
     if cmd.is_empty() {
@@ -101,7 +104,7 @@ fn prompt_variable(
     }
 
     let items: Vec<String> = lines.iter().map(|line| (*line).to_string()).collect();
-    pick_from_items(var_name, items, opts)
+    pick_from_items(var_name, items, opts, theme)
 }
 
 /// Show picker with pre-collected items and apply column extraction.
@@ -109,6 +112,7 @@ fn pick_from_items(
     var_name: &str,
     items: Vec<String>,
     opts: Option<&SuggestionOpts>,
+    theme: &Theme,
 ) -> Result<Option<String>> {
     let picker_config = PickerConfig {
         prompt: var_name.to_string(),
@@ -117,6 +121,7 @@ fn pick_from_items(
         initial_query: opts.and_then(|o| o.query.clone()),
         edit_enabled: false,
         tricks: None,
+        theme: *theme,
     };
 
     match picker::run(ItemSource::Static(items), &picker_config)

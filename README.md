@@ -114,7 +114,15 @@ For Zsh, add this line to `~/.zshrc`:
 eval "$(toto init zsh)"
 ```
 
+For Fish, add this line to `~/.config/fish/config.fish`:
+
+```fish
+eval "$(toto init fish)"
+```
+
 Open a new shell. Press Ctrl-T to open toto. The selected command appears on the shell line.
+
+Fish needs fish 3.4 or newer. The `[keys] tricks` value converts to a Fish key automatically, so `\C-t` becomes `\ct`.
 
 ## Use toto with tmux
 
@@ -171,7 +179,7 @@ Write a variable as `<name>` in a command:
 podman stop <container>
 ```
 
-$ container: podman ps --format '{{.Names}}' --- --prevent-extra
+$ container: podman ps --format '{{.Names}}'
 ````
 
 When toto selects this trick, it runs the suggestion command. You select one value from its output.
@@ -191,11 +199,8 @@ Add options after `---`:
 | ----------------- | ---------------------------------------------------------------- |
 | `--column N`      | Takes column `N` from each output line. The first column is `1`. |
 | `--delimiter SEP` | Uses `SEP` to split columns. The default is whitespace.          |
-| `--prevent-extra` | Allows only values from the suggestion list.                     |
 | `--query TEXT`    | Starts the variable picker with `TEXT`.                          |
 | `--filter TEXT`   | Selects the first line that contains `TEXT`.                     |
-| `--expand`        | Expands each selected line into a separate argument.             |
-| `--map CMD`       | Transforms the selected value with `CMD`.                        |
 
 ## Reuse variables
 
@@ -263,6 +268,14 @@ tricks = ["~/.local/share/toto/tricks"]
 [shell]
 command = "bash"
 
+[style]
+# Color names: black, red, green, yellow, blue, magenta, cyan, white, gray,
+# bright-black, bright-red, bright-green, bright-yellow, bright-blue,
+# bright-magenta, bright-cyan, bright-white, dim, none, default.
+tag_color = "cyan"
+comment_color = "blue"
+snippet_color = "dim"
+
 [picker]
 preview_height = 7
 
@@ -272,6 +285,9 @@ enabled = true
 [keys]
 tricks = "\\C-t"
 ```
+
+Set a color to `none` to drop it. Toto prints no colors when the `NO_COLOR`
+environment variable is set to a non-empty value.
 
 Show configuration paths and the sample file:
 
@@ -288,6 +304,7 @@ Use these environment variables:
 | `TOTO_PATH`          | Sets colon-separated trick paths. It overrides the configuration file.   |
 | `TOTO_CONFIG`        | Sets the path to the configuration file.                                 |
 | `EDITOR` or `VISUAL` | Sets the editor for Ctrl-E. toto uses `vi` when neither variable is set. |
+| `NO_COLOR`           | Prints no colors when set to a non-empty value.                          |
 
 ## Picker keys
 

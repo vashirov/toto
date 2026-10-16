@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # toto shell integration for Bash
-# Usage: eval "$(toto widget bash)"
+# Usage: eval "$(toto init bash)"
 
 # Ctrl-T: fuzzy trick picker
 _toto_tricks() {

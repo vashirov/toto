@@ -19,6 +19,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::matcher::{self, MatchResult, Scheme};
+use crate::theme::Theme;
 use unicode_width::UnicodeWidthStr;
 
 // -- Background matcher thread messages --
@@ -39,15 +40,6 @@ const ALT_ON: &str = "\x1b[?1049h";
 const ALT_OFF: &str = "\x1b[?1049l";
 const SHOW_CUR: &str = "\x1b[?25h";
 const HIDE_CUR: &str = "\x1b[?25l";
-const RESET: &str = "\x1b[0m";
-const BOLD: &str = "\x1b[1m";
-const DIM: &str = "\x1b[2m";
-const C_CYAN: &str = "\x1b[36m";
-const C_BLUE: &str = "\x1b[34m";
-const C_GREEN: &str = "\x1b[32m";
-const BG_SEL: &str = "\x1b[48;5;236m";
-const C_GRAY: &str = "\x1b[38;5;245m";
-const C_MATCH: &str = "\x1b[33m"; // yellow for matched chars
 
 // -- TTY handle --
 
@@ -128,6 +120,8 @@ pub struct PickerConfig {
     pub edit_enabled: bool,
     /// Tricks mode: multi-column display with preview pane.
     pub tricks: Option<TricksDisplay>,
+    /// Colors from the `[style]` config (NO_COLOR aware).
+    pub theme: Theme,
 }
 
 /// Height specification for the picker.
@@ -162,7 +156,7 @@ pub fn parse_height(s: &str) -> Height {
     }
     if let Some(pct) = s.strip_suffix('%') {
         if let Ok(n) = pct.trim().parse::<u16>() {
-            return Height::Percent(n.min(100).max(1));
+            return Height::Percent(n.clamp(1, 100));
         }
     }
     if let Ok(n) = s.parse::<u16>() {
@@ -228,10 +222,19 @@ fn truncate_pad(text: &str, width: usize) -> String {
 /// Truncate text to `width` visual columns, highlighting matched char positions.
 /// `positions` contains char (not byte) indices of matched characters.
 /// `base_style` is the ANSI style to return to after each highlight.
-fn truncate_highlight(text: &str, width: usize, positions: &[u32], base_style: &str) -> String {
+fn truncate_highlight(
+    text: &str,
+    width: usize,
+    positions: &[u32],
+    base_style: &str,
+    theme: &Theme,
+) -> String {
     use std::collections::HashSet;
     use std::fmt::Write as FmtWrite;
 
+    let hl = theme.matches;
+    let bold = theme.bold;
+    let reset = theme.reset;
     let match_set: HashSet<u32> = positions.iter().copied().collect();
     let mut out = String::new();
     let mut used = 0;
@@ -242,7 +245,7 @@ fn truncate_highlight(text: &str, width: usize, positions: &[u32], base_style: &
         if used + cw >= width && used > 0 {
             // Would exceed - truncate with dot
             if in_highlight {
-                let _ = write!(out, "{RESET}{base_style}");
+                let _ = write!(out, "{reset}{base_style}");
             }
             out.push('.');
             let pad = width.saturating_sub(used + 1);
@@ -253,17 +256,17 @@ fn truncate_highlight(text: &str, width: usize, positions: &[u32], base_style: &
         }
         let is_match = match_set.contains(&(ci as u32));
         if is_match && !in_highlight {
-            let _ = write!(out, "{BOLD}{C_MATCH}");
+            let _ = write!(out, "{bold}{hl}");
             in_highlight = true;
         } else if !is_match && in_highlight {
-            let _ = write!(out, "{RESET}{base_style}");
+            let _ = write!(out, "{reset}{base_style}");
             in_highlight = false;
         }
         out.push(ch);
         used += cw;
     }
     if in_highlight {
-        let _ = write!(out, "{RESET}{base_style}");
+        let _ = write!(out, "{reset}{base_style}");
     }
     // Pad remaining
     for _ in 0..width.saturating_sub(used) {
@@ -355,7 +358,7 @@ pub fn run(source: ItemSource, config: &PickerConfig) -> io::Result<PickResult> 
         // Inline: reserve space
         let reserve = draw_rows;
         for _ in 0..reserve {
-            write!(tty.file, "\n")?;
+            writeln!(tty.file)?;
         }
         let origin = term_rows.saturating_sub(reserve);
         write!(tty.file, "\x1b[{};1H{HIDE_CUR}", origin + 1)?;
@@ -508,6 +511,7 @@ fn run_inner(
             draw_rows,
             origin_row,
             config.tricks.as_ref(),
+            &config.theme,
             &mut draw_state,
         )?;
 
@@ -698,9 +702,19 @@ fn draw(
     draw_rows: usize,
     origin_row: usize,
     tricks: Option<&TricksDisplay>,
+    theme: &Theme,
     state: &mut DrawState,
 ) -> io::Result<()> {
     use std::fmt::Write as FmtWrite;
+
+    // Short aliases for inline format captures.
+    let bg = theme.selected_bg;
+    let bold = theme.bold;
+    let com_c = theme.comment;
+    let det_c = theme.detail;
+    let acc = theme.accent;
+    let reset = theme.reset;
+    let dim = theme.dim;
 
     // Calculate layout
     let preview_h = tricks.map(|t| t.preview_height).unwrap_or(0);
@@ -726,7 +740,7 @@ fn draw(
     let status_char = if walk_done { ' ' } else { '*' };
     let _ = write!(
         state.buf,
-        "{BOLD}{C_GREEN}{prompt}{status_char}{RESET} {}/{}>  {query}",
+        "{bold}{acc}{prompt}{status_char}{reset} {}/{}>  {query}",
         matches.len(),
         items.len()
     );
@@ -738,39 +752,45 @@ fn draw(
 
     // Compute column widths -- cache and reuse when match count + cols unchanged
     let col_widths = tricks.map(|td| {
-        if state.col_widths.is_some()
-            && state.col_widths_match_count == matches.len()
-            && state.col_widths_cols == cols
-        {
-            state.col_widths.unwrap()
-        } else {
-            let max_tag = matches
-                .iter()
-                .filter_map(|m| td.entries.get(m.index))
-                .map(|e| UnicodeWidthStr::width(e.tags.as_str()))
-                .max()
-                .unwrap_or(4);
-            let tag_w = (max_tag + 2).min(cols / 3).max(4);
-            let remaining = cols.saturating_sub(tag_w + 4);
-            let comment_w = (remaining * 55 / 100).max(10);
-            let snippet_w = remaining.saturating_sub(comment_w + 2);
-            let widths = (tag_w, comment_w, snippet_w);
-            state.col_widths = Some(widths);
-            state.col_widths_match_count = matches.len();
-            state.col_widths_cols = cols;
-            widths
+        let cached = state.col_widths.filter(|_| {
+            state.col_widths_match_count == matches.len() && state.col_widths_cols == cols
+        });
+        if let Some(widths) = cached {
+            return widths;
         }
+        let max_tag = matches
+            .iter()
+            .filter_map(|m| td.entries.get(m.index))
+            .map(|e| UnicodeWidthStr::width(e.tags.as_str()))
+            .max()
+            .unwrap_or(4);
+        let tag_w = (max_tag + 2).min(cols / 3).max(4);
+        let remaining = cols.saturating_sub(tag_w + 4);
+        let comment_w = (remaining * 55 / 100).max(10);
+        let snippet_w = remaining.saturating_sub(comment_w + 2);
+        let widths = (tag_w, comment_w, snippet_w);
+        state.col_widths = Some(widths);
+        state.col_widths_match_count = matches.len();
+        state.col_widths_cols = cols;
+        widths
     });
 
-    for i in *scroll..end {
-        let m = &matches[i];
+    for (i, m) in matches.iter().enumerate().take(end).skip(*scroll) {
         let is_sel = i == sel;
 
-        if let Some(ref td) = tricks {
+        if let Some(td) = tricks {
             // Tricks mode: multi-column
             let (tag_w, comment_w, snippet_w) = col_widths.unwrap();
             if let Some(entry) = td.entries.get(m.index) {
-                draw_trick_row_buf(&mut state.buf, entry, is_sel, tag_w, comment_w, snippet_w);
+                draw_trick_row_buf(
+                    &mut state.buf,
+                    entry,
+                    is_sel,
+                    tag_w,
+                    comment_w,
+                    snippet_w,
+                    theme,
+                );
             } else {
                 state.buf.push_str("\x1b[K\r\n");
             }
@@ -785,23 +805,17 @@ fn draw(
             if m.positions.is_empty() {
                 let display = truncate_pad(text, avail);
                 if is_sel {
-                    let _ = write!(
-                        state.buf,
-                        "{BG_SEL}{BOLD}{C_GREEN}> {display}\x1b[K{RESET}\r\n"
-                    );
+                    let _ = write!(state.buf, "{bg}{bold}{acc}> {display}\x1b[K{reset}\r\n");
                 } else {
-                    let _ = write!(state.buf, "  {display}\x1b[K{RESET}\r\n");
+                    let _ = write!(state.buf, "  {display}\x1b[K{reset}\r\n");
                 }
             } else if is_sel {
-                let base = format!("{BG_SEL}{BOLD}{C_GREEN}");
-                let display = truncate_highlight(text, avail, &m.positions, &base);
-                let _ = write!(
-                    state.buf,
-                    "{BG_SEL}{BOLD}{C_GREEN}> {display}\x1b[K{RESET}\r\n"
-                );
+                let base = format!("{bg}{bold}{acc}");
+                let display = truncate_highlight(text, avail, &m.positions, &base, theme);
+                let _ = write!(state.buf, "{bg}{bold}{acc}> {display}\x1b[K{reset}\r\n");
             } else {
-                let display = truncate_highlight(text, avail, &m.positions, RESET);
-                let _ = write!(state.buf, "  {display}\x1b[K{RESET}\r\n");
+                let display = truncate_highlight(text, avail, &m.positions, reset, theme);
+                let _ = write!(state.buf, "  {display}\x1b[K{reset}\r\n");
             }
         }
     }
@@ -812,14 +826,14 @@ fn draw(
     }
 
     // Preview pane (tricks mode only)
-    if let Some(ref td) = tricks {
+    if let Some(td) = tricks {
         if td.preview_height > 0 {
             // Separator
-            let _ = write!(state.buf, "{DIM}");
+            let _ = write!(state.buf, "{dim}");
             for _ in 0..cols {
                 state.buf.push(SEPARATOR_CHAR);
             }
-            let _ = write!(state.buf, "{RESET}\r\n");
+            let _ = write!(state.buf, "{reset}\r\n");
 
             let mut preview_rows = 0;
             if let Some(m) = matches.get(sel) {
@@ -827,18 +841,18 @@ fn draw(
                     // Comment
                     let _ = write!(
                         state.buf,
-                        "{BOLD}{C_BLUE}{}{RESET}\x1b[K\r\n",
+                        "{bold}{com_c}{}{reset}\x1b[K\r\n",
                         truncate_pad(&entry.comment, cols)
                     );
                     preview_rows += 1;
 
                     // Detail (gray)
-                    if let Some(ref detail) = entry.detail {
+                    if let Some(detail) = &entry.detail {
                         for line in wrap_lines(detail, cols) {
                             if preview_rows >= td.preview_height {
                                 break;
                             }
-                            let _ = write!(state.buf, "{C_GRAY}{line}{RESET}\x1b[K\r\n");
+                            let _ = write!(state.buf, "{det_c}{line}{reset}\x1b[K\r\n");
                             preview_rows += 1;
                         }
                     }
@@ -855,7 +869,7 @@ fn draw(
                             if preview_rows >= td.preview_height {
                                 break;
                             }
-                            let _ = write!(state.buf, "{wl}{RESET}\x1b[K\r\n");
+                            let _ = write!(state.buf, "{wl}{reset}\x1b[K\r\n");
                             preview_rows += 1;
                         }
                     }
@@ -894,8 +908,15 @@ fn draw_trick_row_buf(
     tag_w: usize,
     comment_w: usize,
     snippet_w: usize,
+    theme: &Theme,
 ) {
     use std::fmt::Write as FmtWrite;
+    let bg = theme.selected_bg;
+    let bold = theme.bold;
+    let tag_c = theme.tag;
+    let com_c = theme.comment;
+    let snip_c = theme.snippet;
+    let reset = theme.reset;
     let tag_s = truncate_pad(&entry.tags, tag_w);
     let com_s = truncate_pad(&entry.comment, comment_w);
     let snip_s = truncate_pad(&entry.snippet_preview, snippet_w);
@@ -903,12 +924,12 @@ fn draw_trick_row_buf(
     if is_sel {
         let _ = write!(
             buf,
-            "{BG_SEL}{BOLD}{C_CYAN}{tag_s}{RESET}{BG_SEL} {BOLD}{C_BLUE}{com_s}{RESET}{BG_SEL} {BOLD}{snip_s}\x1b[K{RESET}\r\n"
+            "{bg}{bold}{tag_c}{tag_s}{reset}{bg} {bold}{com_c}{com_s}{reset}{bg} {bold}{snip_s}\x1b[K{reset}\r\n"
         );
     } else {
         let _ = write!(
             buf,
-            "{C_CYAN}{tag_s}{RESET} {C_BLUE}{com_s}{RESET} {DIM}{snip_s}{RESET}\x1b[K\r\n"
+            "{tag_c}{tag_s}{reset} {com_c}{com_s}{reset} {snip_c}{snip_s}{reset}\x1b[K\r\n"
         );
     }
 }

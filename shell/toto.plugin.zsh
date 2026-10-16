@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 # toto shell integration for Zsh
-# Usage: eval "$(toto widget zsh)"
+# Usage: eval "$(toto init zsh)"
 
 # Ctrl-T: fuzzy trick picker
 _toto_tricks() {

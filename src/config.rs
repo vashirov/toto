@@ -62,18 +62,14 @@ impl PickerConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 pub struct PathsConfig {
     pub tricks: Vec<String>,
 }
 
-impl Default for PathsConfig {
-    fn default() -> Self {
-        Self { tricks: Vec::new() }
-    }
-}
-
+/// Supported color names: black, red, green, yellow, blue, magenta, cyan,
+/// white, gray, bright-* variants, "dim", "none" (no color) and "default".
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct StyleConfig {
@@ -87,7 +83,7 @@ impl Default for StyleConfig {
         Self {
             tag_color: "cyan".into(),
             comment_color: "blue".into(),
-            snippet_color: "white".into(),
+            snippet_color: "dim".into(),
         }
     }
 }
