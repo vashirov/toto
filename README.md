@@ -135,6 +135,23 @@ bind-key -T prefix C-f display-popup -b rounded -w 100% -h 70% -E \
 
 Reload the tmux configuration. Press the prefix key and Ctrl-F to open toto in a popup.
 
+## Use toto with Rex
+
+Rex can open toto in a floating pane and insert the selected trick at your
+shell prompt. Copy the integration files from `contrib/rex`:
+
+```sh
+mkdir -p ~/.config/rex
+cp contrib/rex/toto.lua contrib/rex/toto-rex-pick ~/.config/rex/
+chmod +x ~/.config/rex/toto-rex-pick
+printf 'require("toto")\n' >> ~/.config/rex/init.lua
+rex config reload
+```
+
+Press Ctrl-T in a Rex terminal, select a trick, and its command appears on the
+shell line. See [`contrib/rex/README.md`](contrib/rex/README.md) for arguments
+and details.
+
 ## Write trick files
 
 A trick file uses Markdown. toto reads the headings, prose, and fenced code blocks.

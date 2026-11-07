@@ -1,0 +1,57 @@
+#!/bin/sh
+# toto-rex-pick: pick a toto trick and insert it into a Rex terminal.
+#
+# Rex starts this inside a floating terminal. toto draws its picker on
+# /dev/tty and prints the selected command on stdout. This script then types
+# the command into the target block, leaving it on the shell line for review.
+#
+# Usage: toto-rex-pick SESSION_ID BLOCK_ID [toto arguments...]
+
+set -u
+
+session_id=${1:-}
+target_block=${2:-}
+
+if [ -z "$session_id" ] || [ -z "$target_block" ]; then
+    echo "usage: toto-rex-pick SESSION_ID BLOCK_ID [toto arguments...]" >&2
+    exit 2
+fi
+shift 2
+
+toto_bin=${TOTO_BIN:-toto}
+rex_bin=${REX_BIN:-rex}
+
+if ! command -v "$toto_bin" >/dev/null 2>&1; then
+    echo "toto-rex-pick: '$toto_bin' was not found in PATH" >&2
+    exit 127
+fi
+
+if ! command -v "$rex_bin" >/dev/null 2>&1; then
+    echo "toto-rex-pick: '$rex_bin' was not found in PATH" >&2
+    exit 127
+fi
+
+# The picker writes to /dev/tty, so stdout carries only the selected command.
+selection=$("$toto_bin" --print "$@" 2>/dev/tty)
+status=$?
+if [ "$status" -ne 0 ]; then
+    exit "$status"
+fi
+
+if [ -z "$selection" ]; then
+    exit 0
+fi
+
+# If the target terminal has bracketed paste enabled, paste the command. This
+# keeps multi-line tricks in one editable buffer instead of running each line
+# as it arrives. Otherwise type the text as-is.
+text=$selection
+if "$rex_bin" block call -s "$session_id" -b "$target_block" modes 2>/dev/null |
+    grep -q '"name"[[:space:]]*:[[:space:]]*"bracketed_paste"[^}]*"set"[[:space:]]*:[[:space:]]*true'; then
+    text=$(printf '\033[200~%s\033[201~' "$selection")
+fi
+
+if ! "$rex_bin" send -s "$session_id" -b "$target_block" "$text"; then
+    echo "toto-rex-pick: failed to type the command into $target_block" >&2
+    exit 1
+fi
