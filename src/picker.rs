@@ -79,16 +79,29 @@ impl Tty {
         }
     }
 
-    /// Poll for input readiness with timeout.
-    fn poll(&self, timeout: Duration) -> bool {
+    /// Wait for input readiness with timeout.
+    ///
+    /// `select` is used instead of `poll`: on macOS, polling the `/dev/tty`
+    /// descriptor immediately reports `POLLNVAL`, which makes a `poll`-based
+    /// loop fall through to a blocking read and never reach its timeout.
+    fn wait_for_input(&self, timeout: Duration) -> bool {
         let fd = self.file.as_raw_fd();
-        let mut pfd = libc::pollfd {
-            fd,
-            events: libc::POLLIN,
-            revents: 0,
+        let mut readfds: libc::fd_set = unsafe { std::mem::zeroed() };
+        unsafe { libc::FD_SET(fd, &mut readfds) };
+        let mut tv = libc::timeval {
+            tv_sec: timeout.as_secs() as libc::time_t,
+            tv_usec: timeout.subsec_micros() as libc::suseconds_t,
         };
-        let ms = timeout.as_millis().min(i32::MAX as u128) as i32;
-        unsafe { libc::poll(&mut pfd, 1, ms) > 0 }
+        let ret = unsafe {
+            libc::select(
+                fd + 1,
+                &mut readfds,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut tv,
+            )
+        };
+        ret > 0
     }
 }
 
@@ -366,7 +379,7 @@ pub fn run(source: ItemSource, config: &PickerConfig) -> io::Result<PickResult> 
         origin
     };
 
-    let result = run_inner(&mut tty, source, config, draw_rows, origin_row);
+    let result = run_inner(&mut tty, source, config, draw_rows, origin_row, use_full);
 
     // Leave screen mode
     if use_full {
@@ -393,8 +406,9 @@ fn run_inner(
     tty: &mut Tty,
     source: ItemSource,
     config: &PickerConfig,
-    draw_rows: usize,
+    mut draw_rows: usize,
     origin_row: usize,
+    use_full: bool,
 ) -> io::Result<PickResult> {
     let mut query: Vec<char> = config
         .initial_query
@@ -475,11 +489,14 @@ fn run_inner(
     let mut matched_query = initial.query;
 
     let mut draw_state = DrawState::new();
+    let mut last_size = tty.size();
+    let mut needs_draw = true;
     let result = loop {
         // Pick up latest match results (non-blocking)
         while let Ok(resp) = result_rx.try_recv() {
             matches = resp.results;
             matched_query = resp.query;
+            needs_draw = true;
         }
 
         // Clamp
@@ -492,39 +509,52 @@ fn run_inner(
             scroll = sel;
         }
 
-        let (cols, _) = tty.size();
+        let size = tty.size();
+        if size != last_size {
+            last_size = size;
+            if use_full {
+                draw_rows = size.1;
+            }
+            needs_draw = true;
+        }
+        let (cols, _) = size;
         let query_str: String = query.iter().collect();
-        let items_guard = items.read().unwrap();
 
-        // Draw
-        draw(
-            &mut tty.file,
-            &items_guard,
-            &matches,
-            &query_str,
-            qpos,
-            sel,
-            &mut scroll,
-            &config.prompt,
-            true,
-            cols,
-            draw_rows,
-            origin_row,
-            config.tricks.as_ref(),
-            &config.theme,
-            &mut draw_state,
-        )?;
+        if needs_draw {
+            let items_guard = items.read().unwrap();
 
-        drop(items_guard); // release lock before blocking on input
+            // Draw
+            draw(
+                &mut tty.file,
+                &items_guard,
+                &matches,
+                &query_str,
+                qpos,
+                sel,
+                &mut scroll,
+                &config.prompt,
+                true,
+                cols,
+                draw_rows,
+                origin_row,
+                config.tricks.as_ref(),
+                &config.theme,
+                &mut draw_state,
+            )?;
 
-        // Poll with timeout
+            drop(items_guard); // release lock before blocking on input
+            needs_draw = false;
+        }
+
+        // Wait with a timeout. The short idle timeout lets the picker notice
+        // a terminal resize even when no input or match results arrive.
         let timeout = if matched_query != query_str {
             Duration::from_millis(16)
         } else {
-            Duration::from_secs(60)
+            Duration::from_millis(200)
         };
 
-        if !tty.poll(timeout) {
+        if !tty.wait_for_input(timeout) {
             continue;
         }
 
@@ -539,7 +569,7 @@ fn run_inner(
         // Arrow keys send ESC [ A/B/C/D -- if we only got ESC, poll briefly for rest.
         // Use 50ms timeout -- generous enough for slow terminals/SSH.
         let n = if n == 1 && buf[0] == 0x1b {
-            if tty.poll(Duration::from_millis(50)) {
+            if tty.wait_for_input(Duration::from_millis(50)) {
                 let extra = tty.file.read(&mut buf[1..])?;
                 1 + extra
             } else {
@@ -671,6 +701,10 @@ fn run_inner(
                 }
             }
         }
+
+        // Any key can change what is on screen, even when it only moves the
+        // cursor or selection.
+        needs_draw = true;
 
         if query_changed {
             let q: String = query.iter().collect();
