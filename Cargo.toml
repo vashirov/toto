@@ -2,7 +2,7 @@
 name = "toto"
 version = "1.0.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.88"
 description = "Toto is a fuzzy finder for your shell tricks 🐾"
 license = "Apache-2.0"
 
